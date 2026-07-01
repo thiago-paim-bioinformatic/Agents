@@ -2,8 +2,16 @@
 
 #bibliotecas
 
+#O PyMuPDFLoader funciona perfeitamente (e de forma extremamente rápida) tanto com PDFs originais/nativos quanto com PDFs escaneados.
+#pip install pymupdf pymupdf4llm
+#from langchain_community.document_loaders import PyMuPDFLoader
+
 # Loader de PDF
 from langchain_community.document_loaders import PyPDFLoader
+
+#Loader de TXT
+from langchain_community.document_loaders import TextLoader
+
 
 # Strings 
 from langchain_core.documents import Document
@@ -196,8 +204,10 @@ class Agent():
         A sua tarefa é a seguinte:
         {self.task}
         
-        Utilize estritamente o contexto abaixo para responder à pergunta:
+        Utilize estritamente o contexto abaixo e os dados de memória, se disponíveis, para responder à pergunta:
         Contexto: {{context}}
+        
+        Memória: {{memory}}
         
         """
         
@@ -210,7 +220,7 @@ class Agent():
         self.llm=llm
         self.document_chain=document_chain
     
-    def run_agent(self, user_prompt:str, retriever_type="mmr"):
+    def run_agent(self, user_prompt:str, retriever_type="mmr", use_memory=True):
         if retriever_type == "mmr":
             retriever = self.knowledge.as_retriever(
                 search_type="mmr",
@@ -291,22 +301,41 @@ class Agent():
         
         # Seleciona apenas os 3 mais relevantes após o rerank
         top_docs = docs_reranked[:3] 
-        
+
+        ####### IMPORTANTE #######
+        # Criar chamada de acesso a memória do agente com o mesmo `user_prompt`
+        # Concatenar com `top_docs` e explicitar que `foi buscado na memória do agente`
+        # Será a entrada para `context`...
+        ####### IMPORTANTE #######
+
+        if use_memory == True:
+            try:
+                self.access_memory(user_prompt=user_prompt,  retriever_type="mmr")
+                get_memory = self.get_agent_memory()
+                memory = get_memory["answer_memory"]
+            except:
+                memory = []
+        else:
+            memory = []
+            
         # 3. Geração da Resposta Final
         answer = self.document_chain.invoke({
             "context": top_docs,
+            "memory":memory,
             "input": user_prompt
         })
 
         self.answer=answer
         self.user_prompt=user_prompt
         self.top_docs=top_docs
+        self.memory_docs=memory
 
     def get_agent_answer(self) -> dict:
         output = {
             "answer":self.answer,
             "user_prompt":self.user_prompt,
-            "top_text_rag":self.top_docs
+            "top_text_rag":self.top_docs,
+            "memory_docs":self.memory_docs
         }
         return output
         
@@ -330,7 +359,7 @@ class Agent():
         
         self.memory.add_chunk_to_vectorstore(chunks=chunks, batch_size=1)
 
-    def acess_memory(self, user_prompt:str, retriever_type="mmr"):
+    def access_memory(self, user_prompt:str, retriever_type="mmr"):
         if retriever_type == "mmr":
             retriever_memory = self.vectorstore_memory.as_retriever(
                 search_type="mmr",
@@ -367,7 +396,8 @@ class Agent():
         # 2. Geração da Resposta Final
         answer = self.document_chain.invoke({
             "context": docs_recuperados,
-            "input": user_prompt
+            "input": user_prompt,
+            "memory": [] # aqui não é carregada a memória, pois já se está buscando na própria...
         })
 
         self.answer_memory=answer
